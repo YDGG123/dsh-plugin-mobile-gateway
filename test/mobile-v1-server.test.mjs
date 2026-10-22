@@ -448,7 +448,9 @@ test('symmetric pairing: a gateway pairing can mint the mobile-v1 session too', 
   await adapter.initialize()
   const server = await createMobileV1({ home, config: { devAllowInsecure: true }, adapter, publicUrl: 'https://pair.example.test' })
   try {
-    const first = await server.issueSessionForDevice({ name: 'iPhone 15' })
+    const first = await server.issueSessionForDevice({ name: 'iPhone 15', serverUrl: 'https://ydgg.dpdns.org' })
+    // 反向路径要带 serverUrl：老版 App 只能从 session.serverUrl 重建 transport。
+    assert.equal(first.serverUrl, 'https://ydgg.dpdns.org')
     assert.equal(typeof first.accessToken, 'string')
     assert.equal(typeof first.refreshToken, 'string')
     assert.equal(typeof first.deviceId, 'string')
