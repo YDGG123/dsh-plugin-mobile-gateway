@@ -127,3 +127,17 @@ test('every ctx service access is injected or read reflectively', () => {
   }
   assert.deepEqual([...offenders], [], `未 inject 的服务被属性访问：${[...offenders].join(', ')}`)
 })
+
+// 静态守卫：网关配对处理器不能引用 mobile-v1 装配块里的局部函数。
+// f2781ee 就在这里栽过：resolveMobileV1PublicUrl 是块内 const，配对帧里引用会
+// ReferenceError，被 catch 吞掉后 bridgeSession 整个缺省（真机表现：扫码后 Bot tab 空）。
+test('gateway paired handler must not reach into mobile-v1 wiring scope', () => {
+  const source = readFileSync(new URL('../lib/index.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('U5 对称配对')
+  assert.ok(start > 0, '找不到对称签发的处理块')
+  const end = source.indexOf("kind: 'paired'", start)
+  assert.ok(end > start, '找不到 paired 帧构造')
+  const block = source.slice(start, end)
+  assert.ok(!block.includes('resolveMobileV1PublicUrl'), '配对帧处理器引用了 mobile-v1 块内局部函数（会 ReferenceError）')
+  assert.ok(block.includes('handle.url'), '应使用 handle 自带的已归一化公网 origin')
+})
