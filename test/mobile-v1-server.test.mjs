@@ -212,3 +212,48 @@ test('mobile-v1 rejects invalid pairing codes and bad bodies', async () => {
     assert.equal((await malformed.json()).error.code, 'INVALID_JSON')
   } finally { await ctx.close() }
 })
+
+test('pairing url is normalized to an https origin even when the tunnel reports a wss url', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  const server = await createMobileV1({
+    home,
+    config: { devAllowInsecure: true },
+    adapter,
+    publicUrl: 'https://pair.example.test',
+    // 真机现场形态：隧道快照给的是旧网关 WS 地址。
+    resolvePublicUrl: () => 'wss://recycling-phil-letters-refer.trycloudflare.com/ws/mobile',
+  })
+  try {
+    const pairing = await server.operator('pairing.create')
+    assert.equal(pairing.url, 'https://recycling-phil-letters-refer.trycloudflare.com')
+    // 镜像 App 的 validateServerUrl：https 根 origin 才通过。
+    assert.match(pairing.url, /^(https?):\/\/([A-Za-z0-9.\-\[\]:]+)(\/|\/mobile\/v1\/?)?$/)
+    const status = await server.operator('status')
+    assert.equal(status.url, pairing.url)
+  } finally {
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('unusable resolved url falls back to the configured public origin', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  const server = await createMobileV1({
+    home,
+    config: { devAllowInsecure: true },
+    adapter,
+    publicUrl: 'https://pair.example.test',
+    resolvePublicUrl: () => 'not a url',
+  })
+  try {
+    const pairing = await server.operator('pairing.create')
+    assert.equal(pairing.url, 'https://pair.example.test')
+  } finally {
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})
