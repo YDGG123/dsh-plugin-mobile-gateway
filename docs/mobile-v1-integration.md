@@ -20,6 +20,23 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 路由表在 apply 早期同步注册、监听器在请求期查表（`lib/extra-routes.mjs`，前缀 longest-prefix-wins）。
 `/mgw/*` 管理面**只**在宿主 loopback 上，LAN/隧道一律 404，公网够不到。
 
+### 普通会话行（`kind: "session"`，U4）
+
+`/conversations` 与 `/state.sessions` 会带上**非团队的普通会话**，供 App 顶部「团队 / 会话」分段使用：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` / `sessionId` | 会话 id（点入即用它开 chat） |
+| `kind` | 固定 `"session"` |
+| `name` | 会话标题；与 bot/room 行走同一套 redaction（缺失时为「未命名会话」） |
+| `lastActiveAt` | 最近活跃时间（宿主 `updatedAt`），跨行排序用 |
+| `workspace` | 工作区名（cwd 的末段，**不下发完整路径**，同样过 redaction） |
+| `busy` | 会话正在运行（可选） |
+
+规则：已作为 bot/room 出现的会话（含 `parts`）不重复出现；子代理会话（`origin: "subagent"`）不上主列表；
+会话列表取不到时降级为空、绝不影响团队视图。能力面：`/info.capabilities.sessions === true` 才代表可用。
+数据源是插件内已有的 `api.sessions.list()`（与旧网关会话列表同源），**手机端不因此多一套凭证**。
+
 ## 端点（前缀 `/mobile/v1`）
 
 | 方法 | 路径 | 说明 |
