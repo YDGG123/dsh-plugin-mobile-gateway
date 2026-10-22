@@ -9,7 +9,8 @@ import { MOBILE_ACTIONS } from '../lib/mobile-v1/actions.mjs'
 const STATE = {
   readOnly: null,
   bots: [{ id: 'chief', sessionId: 's-chief' }],
-  rooms: [{ id: 'room-1', sessionId: 'room-1', members: ['chief'], admin: 'chief', mode: 'admin' }],
+  // 与生产一致：原版 ds-bot 0.2.0 的 rooms 只有 id，没有 sessionId。
+  rooms: [{ id: 'room-1', members: ['chief'], admin: 'chief', mode: 'admin' }],
 }
 
 async function withSecrets(secrets, run) {
@@ -91,4 +92,34 @@ test('queue actions are no longer advertised', () => {
   assert.ok(!MOBILE_ACTIONS.includes('queue'))
   assert.ok(!MOBILE_ACTIONS.includes('queue-remove'))
   assert.ok(MOBILE_ACTIONS.includes('set-flags'))
+})
+
+test('group submit works when the raw room has no sessionId field', async () => {
+  // 真机 409 根因：生产 rooms 只有 id，旧实现比较 room.sessionId（undefined）→ 恒 409。
+  const calls = []
+  const service = createHostTeamService({ sessionController: { async prompt(payload) { calls.push(payload); return { accepted: true } } } })
+  const result = await service.submit(
+    { conversationId: 'room-1', expectedSessionId: 'room-1', expectedMembers: ['chief'], requestId: 'g-1', content: [{ type: 'text', text: 'hello group' }] },
+    AbortSignal.timeout(1000),
+    { loadState: async () => STATE }
+  )
+  assert.deepEqual(result, { accepted: true, requestId: 'g-1', sessionId: 'room-1' })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].sessionId, 'room-1', '群消息必须投到 room.id 这个群会话')
+})
+
+test('group membership compares only visible bots, and real mismatches still fail', async () => {
+  const service = createHostTeamService({ sessionController: { async prompt() { return { accepted: true } } } })
+  // 房间里有人不是可见 bot（例如隐藏成员）：投影会过滤，校验必须用同一口径。
+  const state = { ...STATE, rooms: [{ id: 'room-1', members: ['chief', 'ghost-member'], admin: 'chief', mode: 'admin' }] }
+  await service.submit(
+    { conversationId: 'room-1', expectedSessionId: 'room-1', expectedMembers: ['chief'], requestId: 'g-2', content: [{ type: 'text', text: 'hi' }] },
+    AbortSignal.timeout(1000),
+    { loadState: async () => state }
+  )
+  // 真的换了成员仍要拒绝（防止投到过期群会话）。
+  await assert.rejects(
+    service.submit({ conversationId: 'room-1', expectedSessionId: 'room-1', expectedMembers: ['coder'], requestId: 'g-3', content: [{ type: 'text', text: 'hi' }] }, AbortSignal.timeout(1000), { loadState: async () => state }),
+    error => error.code === 'TARGET_CHANGED' && /membership/.test(error.message)
+  )
 })
