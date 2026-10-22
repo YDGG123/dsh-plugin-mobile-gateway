@@ -136,6 +136,7 @@ mobileV1PublicUrl: https://ydgg.dpdns.org
 | --- | --- | --- |
 | `mobileV1Enabled` | `false` | 是否启用 `/mobile/v1`；**开关权在部署侧**，包内默认关闭 |
 | `mobileV1Home` | `''` | 设备/回执存储目录，空则用 `~/.dsh/mobile-v1` |
+| `publicUrl` | `''` | 网关自己的公网 WS 地址（`wss://host/ws/mobile`）；**优先级高于 `publicUrlFile`**，原版配对载荷的 `publicUrl` 就取它 |
 | `mobileV1PublicUrl` | `''` | 配对资料里的公网地址；空则取隧道/`publicUrl`。`wss://`/`ws://` 或带路径的地址会被归一化为 **https 根 origin**（App 的 `validateServerUrl` 只接受这个形态，路径只能是 `/` 或 `/mobile/v1`） |
 | `mobileV1Prefix` | `/mobile/v1` | 挂载前缀；共存测试可设 `/mobile-v1-<name>`（只允许这两类） |
 | `mobileV1SecretsFile` | `''` | 脱敏密钥文件；空则 `~/.dsh/bot/secrets.json`（与 ds-bot 同一份） |
