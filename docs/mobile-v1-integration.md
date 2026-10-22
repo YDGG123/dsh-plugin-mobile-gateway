@@ -82,6 +82,22 @@ adapter 初始化带 20s 看门狗。
 
 **队列动作**：`queue` / `queue-remove` 在原版与补丁版 ds-bot 均未实现，按裁决**不再宣告**（App 无 queue UI）。
 
+### 外部命名隧道（固定域名）
+
+想让公网域名永久固定时，用外部常驻隧道（launchd 等）指向插件的**固定回环入口**
+`http://127.0.0.1:3082`，并关掉插件自管的 quick 隧道：
+
+```yaml
+cloudflare:
+  enabled: false            # 自管隧道关闭，不再随重启换域名
+  port: 3082                # 回环入口端口（外部隧道指向这里）
+  serveLoopback: true       # 关闭自管隧道后仍保持回环入口监听（默认 true）
+mobileV1PublicUrl: https://ydgg.dpdns.org
+```
+
+注意：`cloudflareServeLoopback` 默认 `true`——旧版本关闭自管隧道会连 3082 监听一起停掉，
+外部隧道就会 502。现在两者解耦：只要网关插件在跑，回环入口就在。
+
 ## 配置（插件 config）
 
 | 键 | 默认 | 说明 |

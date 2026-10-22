@@ -247,5 +247,46 @@ restored.dispose()
   await rotate.dispose()
 }
 
+
+// ---- 外部命名隧道：插件自管隧道关闭时，回环入口仍要在（否则外部隧道 502）----
+{
+  const freePort = async () => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1')
+    await once(probe, 'listening')
+    const value = probe.address().port
+    probe.close()
+    await once(probe, 'close')
+    return value
+  }
+  const externalFile = path.join(temp, 'cloudflare-external.json')
+  const externalPort = await freePort()
+  const before = children.length
+  const external = createCloudflareTunnel({
+    file: externalFile, port: externalPort, wsPath: '/ws/mobile', supported: true, spawnProcess,
+    prepareExecutable: async () => '/fake/cloudflared',
+    isGatewayEnabled: () => true,
+    serveLoopback: true,
+    onUpgrade: (_req, socket) => socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'),
+    onHttp: (req, res) => {
+      if (!req.url.startsWith('/mobile/v1')) return false
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{"protocolVersion":1}')
+      return true
+    },
+  })
+  // 插件自管隧道保持关闭（enabled=false）——外部 launchd 隧道负责公网。
+  await external.reconcile()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(external.snapshot().enabled, false)
+  assert.equal(external.snapshot().loopbackListening, true, '关闭自管隧道后回环入口必须仍在监听')
+  const response = await fetch('http://127.0.0.1:' + externalPort + '/mobile/v1/info')
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).protocolVersion, 1)
+  assert.equal(children.length, before, '仅回环模式不得拉起 cloudflared')
+  await external.dispose()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+}
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log('CLOUDFLARE TUNNEL TESTS PASSED')
