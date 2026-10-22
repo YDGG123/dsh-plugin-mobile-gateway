@@ -306,3 +306,58 @@ test('mobile-v1 mounts on the gateway LAN/public listener, not only the host web
     await rm(home, { recursive: true, force: true })
   }
 })
+
+test('history without sessionController reports a readable 503 instead of a 500', async () => {
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  // 真机 S5：宿主没把 sessionController 交给插件时，历史接口曾以 TypeError → INTERNAL_ERROR(500)
+  // 的形式失败，日志里还看不到栈。现在必须是明确的 503 + 错误码。
+  await assert.rejects(() => adapter.history('chief'), (error) => {
+    assert.equal(error.status, 503)
+    assert.equal(error.code, 'SESSION_CONTROLLER_UNAVAILABLE')
+    return true
+  })
+})
+
+test('sessionController is resolved per call, so a late-provisioned service is picked up', async () => {
+  const { createExtraRouteTable } = await import('../lib/extra-routes.mjs')
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const extra = createExtraRouteTable()
+  // 真机 S5 的根因：宿主在 apply 之后才提供 sessionController，
+  // 旧实现把 null 固化进 adapter → 历史接口 TypeError → 500。
+  let controller = null
+  const handle = startMobileV1({
+    connection: fixtureConnection(),
+    resolveSessionController: () => controller,
+    webServer: { port: 0, register: () => () => {}, registerUpgrade: () => () => {} },
+    extraServers: [extra],
+    home,
+    prefix: '/mobile-v1-test',
+    publicUrl: 'https://pair.example.test',
+  })
+  const listener = http.createServer((req, res) => {
+    if (extra.handleHttp(req, res)) return
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${listener.address().port}/mobile-v1-test`
+  try {
+    const waitReady = async () => {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const response = await fetch(`${base}/info`)
+        if (response.status === 200) return response.json()
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      throw new Error('mobile-v1 never became ready')
+    }
+    assert.equal((await waitReady()).capabilities.cancel, false)
+    // 服务晚到：能力面必须立刻反映出来（代理按调用解析，不再固化 null）。
+    controller = { cancel() {}, async prompt() { return { accepted: true } } }
+    assert.equal((await waitReady()).capabilities.cancel, true)
+  } finally {
+    await new Promise(resolve => listener.close(resolve))
+    await handle.dispose()
+    await rm(home, { recursive: true, force: true })
+  }
+})
