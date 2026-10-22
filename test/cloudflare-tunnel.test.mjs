@@ -170,5 +170,82 @@ restored.dispose()
   await v1.dispose()
 }
 
+
+// ---- 公网健康检查：可重试失败要自动复检（quick 隧道刚上线 DNS 未生效的假警报）----
+{
+  const healthFile = path.join(temp, 'cloudflare-health.json')
+  const healthPort = await (async () => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1')
+    await once(probe, 'listening')
+    const value = probe.address().port
+    probe.close()
+    await once(probe, 'close')
+    return value
+  })()
+  let attempts = 0
+  const health = createCloudflareTunnel({
+    file: healthFile, port: healthPort, wsPath: '/ws/mobile', supported: true, spawnProcess,
+    prepareExecutable: async () => '/fake/cloudflared',
+    isGatewayEnabled: () => true,
+    onUpgrade: (_req, socket) => socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'),
+    healthRetryDelays: [20, 40],
+    probeEndpoint: async () => {
+      attempts += 1
+      if (attempts === 1) return { state: 'dns-error', message: '本机无法解析公网域名', checkedAt: new Date().toISOString(), code: 'ENOTFOUND' }
+      return { state: 'reachable', message: 'mock reachable', checkedAt: new Date().toISOString(), httpStatus: 401 }
+    },
+  })
+  await health.configure({ enabled: true, hostname: 'gateway.example.com', token })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(health.snapshot().endpointHealth.state, 'dns-error')
+  assert.equal(health.snapshot().publicReady, false)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  assert.ok(attempts >= 2, '可重试失败必须自动复检')
+  assert.equal(health.snapshot().endpointHealth.state, 'reachable')
+  assert.equal(health.snapshot().publicReady, true)
+  await health.dispose()
+}
+
+
+// ---- quick 隧道同进程换域名：旧域名的健康结论必须作废并重检 ----
+{
+  const rotateFile = path.join(temp, 'cloudflare-rotate.json')
+  const rotatePort = await (async () => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1')
+    await once(probe, 'listening')
+    const value = probe.address().port
+    probe.close()
+    await once(probe, 'close')
+    return value
+  })()
+  const probed = []
+  const rotate = createCloudflareTunnel({
+    file: rotateFile, port: rotatePort, wsPath: '/ws/mobile', supported: true, spawnProcess,
+    prepareExecutable: async () => '/fake/cloudflared',
+    isGatewayEnabled: () => true,
+    onUpgrade: (_req, socket) => socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'),
+    probeEndpoint: async (endpoint) => {
+      probed.push(endpoint)
+      return { state: 'reachable', message: 'mock reachable', checkedAt: new Date().toISOString(), httpStatus: 401 }
+    },
+  })
+  await rotate.configure({ enabled: true, mode: 'quick' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const firstName = rotate.snapshot().publicUrl
+  assert.match(firstName, /^wss:\/\/quick-\d+\.trycloudflare\.com\/ws\/mobile$/)
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.deepEqual(probed, [firstName])
+  // 同一子进程里域名被 Cloudflare 换掉
+  children.at(-1).child.stderr.write('\nhttps://rotated-v1.trycloudflare.com\n')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(rotate.snapshot().publicUrl, 'wss://rotated-v1.trycloudflare.com/ws/mobile')
+  assert.equal(probed.length, 2, '换域名后必须重新检测')
+  assert.equal(probed[1], 'wss://rotated-v1.trycloudflare.com/ws/mobile')
+  assert.equal(rotate.snapshot().endpointHealth.state, 'reachable')
+  await rotate.dispose()
+}
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log('CLOUDFLARE TUNNEL TESTS PASSED')
