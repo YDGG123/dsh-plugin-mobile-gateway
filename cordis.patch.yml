@@ -33,6 +33,13 @@
         # cloudflaredPath: /path/to/cloudflared
         # Written automatically by `sudo npx dsh-plugin-mobile-gateway setup`.
         publicUrlFile: /etc/dsh-mobile-gateway/public-url
+        # /mobile/v1：原 ds-bot-mobile-bridge 协议（团队投影/配对/动作/WS）。
+        # 与 /ws/mobile 并存，共用同一端口与公网入口；配对管理在 /mgw/mobile-v1。
+        mobileV1Enabled: true
+        # 设备与回执存储目录；留空用 ~/.dsh/mobile-v1。
+        # mobileV1Home: /path/to/mobile-v1
+        # 配对资料里的公网地址；留空取隧道/ publicUrl。
+        # mobileV1PublicUrl: https://example.trycloudflare.com
 
 # The gateway's `search` query channel needs the full-text session index,
 # which dsh-web-app deliberately ships as `openAt: never` (search disabled).
