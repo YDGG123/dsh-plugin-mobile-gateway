@@ -441,3 +441,34 @@ test('no issuance hook keeps the gateway field absent (old clients unaffected)',
     await rm(home, { recursive: true, force: true })
   }
 })
+
+test('symmetric pairing: a gateway pairing can mint the mobile-v1 session too', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  const server = await createMobileV1({ home, config: { devAllowInsecure: true }, adapter, publicUrl: 'https://pair.example.test' })
+  try {
+    const first = await server.issueSessionForDevice({ name: 'iPhone 15' })
+    assert.equal(typeof first.accessToken, 'string')
+    assert.equal(typeof first.refreshToken, 'string')
+    assert.equal(typeof first.deviceId, 'string')
+    // 签发的 session 可直接用于 /state（重新配对会轮换 token，所以先验再用）。
+    const http = (await import('node:http')).createServer(server.handleHttp)
+    await new Promise(resolve => http.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${http.address().port}/mobile/v1`
+    try {
+      const state = await fetch(`${base}/state`, { headers: { authorization: `Bearer ${first.accessToken}` } })
+      assert.equal(state.status, 200)
+    } finally {
+      await new Promise(resolve => http.close(resolve))
+    }
+    const second = await server.issueSessionForDevice({ name: 'iPhone 15' })
+    // 同名重复配对复用同一条设备，不制造重复记录。
+    assert.equal(second.deviceId, first.deviceId)
+    const third = await server.issueSessionForDevice({ name: 'iPad' })
+    assert.notEqual(third.deviceId, first.deviceId)
+  } finally {
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})
