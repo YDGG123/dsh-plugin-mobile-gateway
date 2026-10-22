@@ -36,6 +36,17 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 （`bridge.describe` / `state` / `bridge.submit` / `bridge.redact`），与独立 bridge 插件相同。
 数据源封装在 `lib/mobile-v1/adapter.mjs`，未来宿主直读可用时只需替换该文件。
 
+**原版 ds-bot（无桥接补丁）回退**：`lib/mobile-v1/host-service.mjs` 提供等价实现——
+`bridge.describe` 为静态契约、`bridge.redact` 复刻 ds-bot secrets 替换器
+（密钥唯一来源：`~/.dsh/bot/secrets.json`，可用 `mobileV1SecretsFile` 覆盖，**不要另建密钥库**）、
+`bridge.submit` 走 `sessionController.prompt({requestId, sessionId, mode:'queue', content})`
+并按 state 做 TARGET_CHANGED/READ_ONLY 校验。adapter 检测到 RPC 缺 `bridge.*`（501）时自动切换。
+
+**共存模式**：`mobileV1Prefix: /mobile-v1-test` 可与独立 bridge 插件并行服务，
+逐端点 diff 一致后再切回 `/mobile/v1` 并卸载三件套。
+
+**队列动作**：`queue` / `queue-remove` 在原版与补丁版 ds-bot 均未实现，按裁决**不再宣告**（App 无 queue UI）。
+
 ## 配置（插件 config）
 
 | 键 | 默认 | 说明 |
@@ -43,6 +54,8 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 | `mobileV1Enabled` | `true` | 是否启用 `/mobile/v1` |
 | `mobileV1Home` | `''` | 设备/回执存储目录，空则用 `~/.dsh/mobile-v1` |
 | `mobileV1PublicUrl` | `''` | 配对资料里的公网地址；空则取隧道/`publicUrl` |
+| `mobileV1Prefix` | `/mobile/v1` | 挂载前缀；共存测试可设 `/mobile-v1-<name>`（只允许这两类） |
+| `mobileV1SecretsFile` | `''` | 脱敏密钥文件；空则 `~/.dsh/bot/secrets.json`（与 ds-bot 同一份） |
 
 ## 桌面配对管理（loopback-only）
 
