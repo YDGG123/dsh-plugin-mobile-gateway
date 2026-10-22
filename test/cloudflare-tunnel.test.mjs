@@ -288,5 +288,52 @@ restored.dispose()
   await new Promise((resolve) => setTimeout(resolve, 50))
 }
 
+// ---- 关隧道必须回收自己 spawn 的 cloudflared（真机出现过泄漏）----
+{
+  const stuckFile = path.join(temp, 'cloudflare-stuck.json')
+  const probe = net.createServer()
+  probe.listen(0, '127.0.0.1')
+  await once(probe, 'listening')
+  const stuckPort = probe.address().port
+  probe.close()
+  await once(probe, 'close')
+  const signals = []
+  // 故意忽略 SIGTERM 的子进程：只有 SIGKILL 才真正退出。
+  const stubbornSpawn = (command, args, options) => {
+    const child = new EventEmitter()
+    child.stderr = new PassThrough()
+    child.pid = 999999
+    child.exitCode = null
+    child.signalCode = null
+    child.kill = signal => {
+      signals.push(signal)
+      if (signal === 'SIGKILL') {
+        child.signalCode = 'SIGKILL'
+        queueMicrotask(() => child.emit('exit', null, 'SIGKILL'))
+      }
+      return true
+    }
+    queueMicrotask(() => {
+      child.stderr.write('https://stuck-tunnel.trycloudflare.com\n')
+      child.stderr.write('Registered tunnel connection')
+    })
+    return child
+  }
+  const stuck = createCloudflareTunnel({
+    file: stuckFile, port: stuckPort, wsPath: '/ws/mobile', supported: true,
+    spawnProcess: stubbornSpawn,
+    prepareExecutable: async () => '/fake/cloudflared',
+    isGatewayEnabled: () => true,
+    onUpgrade: (_req, socket) => socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'),
+  })
+  await stuck.configure({ enabled: true, mode: 'quick' })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(stuck.snapshot().state, 'online')
+  await stuck.configure({ enabled: false })
+  assert.equal(stuck.snapshot().state, 'disabled')
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'], 'SIGTERM 无效时必须升级 SIGKILL')
+  await stuck.dispose()
+}
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log('CLOUDFLARE TUNNEL TESTS PASSED')
