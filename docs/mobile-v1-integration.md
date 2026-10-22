@@ -61,6 +61,7 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| GET | `/mgw/mobile-v1/panel` | **单文件配对面板**（生成配对资料 / 批准 / 拒绝 / 撤销，2s 轮询，零依赖） |
 | GET | `/mgw/mobile-v1/status` | 服务状态（含 pending 配对、设备列表） |
 | POST | `/mgw/mobile-v1/pairing` | 生成配对资料 `{url, code, serverId, expiresAt}` |
 | POST | `/mgw/mobile-v1/pairing/approve` | `{requestId}` 批准 |
@@ -68,6 +69,9 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 | POST | `/mgw/mobile-v1/devices/revoke` | `{id}` 撤销设备 |
 
 配对码 120 秒有效；claim 300 秒；完整流程见设计文档 §2.8。
+
+面板地址：`http://127.0.0.1:<webPort>/mgw/mobile-v1/panel`（仅本机可访问）。
+卸载 companion 后，手机配对流程 = 面板「生成配对资料」→ 复制 JSON → App 粘贴 → 面板「批准」。
 
 ## 测试
 
