@@ -42,6 +42,11 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 `bridge.submit` 走 `sessionController.prompt({requestId, sessionId, mode:'queue', content})`
 并按 state 做 TARGET_CHANGED/READ_ONLY 校验。adapter 检测到 RPC 缺 `bridge.*`（501）时自动切换。
 
+**启动语义**：`/mobile-v1*` 路由在插件 apply 阶段**同步注册**；适配器初始化在后台进行，
+未就绪期间返回 503（`STARTING` / `CONNECTION_UNAVAILABLE`），不会出现「路由不存在」的 404。
+启动过程有分阶段日志（initializing adapter / adapter ready / creating server / ready / failed），
+adapter 初始化带 20s 看门狗。
+
 **共存模式**：`mobileV1Prefix: /mobile-v1-test` 可与独立 bridge 插件并行服务，
 逐端点 diff 一致后再切回 `/mobile/v1` 并卸载三件套。
 

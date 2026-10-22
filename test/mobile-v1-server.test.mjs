@@ -131,6 +131,8 @@ test('coexistence prefix serves the same protocol under /mobile-v1-test', async 
   assert.equal(handle.prefix, '/mobile-v1-test')
   assert.equal(routes[0].path, '/mobile-v1-test')
   assert.equal(upgrades[0].path, '/mobile-v1-test/events')
+  // 路由同步注册（宿主 webServer 的路由是活表，但初始化可能较慢，未就绪应 503）。
+  await handle.ready
 
   const server = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/mobile-v1-test')) routes[0].handler(req, res)
@@ -143,6 +145,38 @@ test('coexistence prefix serves the same protocol under /mobile-v1-test', async 
     assert.equal(info.status, 200)
     assert.equal((await info.json()).protocolVersion, 1)
     assert.equal((await fetch(`http://127.0.0.1:${port}/mobile/v1/info`)).status, 404)
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+    await handle.dispose()
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('routes answer 503 until the service is ready, then 200', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-slow-'))
+  const base = fixtureConnection()
+  const slow = {
+    createSharedFetchHandler() {
+      const handler = base.createSharedFetchHandler()
+      return { fetch: async (request, peer) => { await new Promise(r => setTimeout(r, 300)); return handler.fetch(request, peer) } }
+    },
+  }
+  const routes = []
+  const webServer = {
+    port: 0,
+    register(route) { routes.push(route); return () => {} },
+    registerUpgrade() { return () => {} },
+  }
+  const handle = startMobileV1({ connection: slow, webServer, home, prefix: '/mobile-v1-test', publicUrl: 'http://127.0.0.1:3082' })
+  const server = http.createServer((req, res) => routes[0].handler(req, res))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  try {
+    const early = await fetch(`http://127.0.0.1:${port}/mobile-v1-test/info`)
+    assert.equal(early.status, 503)
+    await handle.ready
+    const ready = await fetch(`http://127.0.0.1:${port}/mobile-v1-test/info`)
+    assert.equal(ready.status, 200)
   } finally {
     await new Promise(resolve => server.close(resolve))
     await handle.dispose()
