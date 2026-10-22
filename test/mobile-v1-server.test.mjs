@@ -257,3 +257,52 @@ test('unusable resolved url falls back to the configured public origin', async (
     await rm(home, { recursive: true, force: true })
   }
 })
+
+test('mobile-v1 mounts on the gateway LAN/public listener, not only the host web server', async () => {
+  const { createExtraRouteTable } = await import('../lib/extra-routes.mjs')
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const extra = createExtraRouteTable()
+  const hostRoutes = []
+  const hostUpgrades = []
+  const host = {
+    port: 0,
+    register(route) { hostRoutes.push(route.path); return () => {} },
+    registerUpgrade(route) { hostUpgrades.push(route.path); return () => {} },
+  }
+  const handle = startMobileV1({
+    connection: fixtureConnection(),
+    webServer: host,
+    extraServers: [extra],
+    home,
+    prefix: '/mobile-v1-test',
+    publicUrl: 'https://pair.example.test',
+  })
+  // 与隧道/LAN 监听器同构：请求期查附加路由表，未命中才 404。
+  const listener = http.createServer((req, res) => {
+    if (extra.handleHttp(req, res)) return
+    res.writeHead(404, { 'content-type': 'text/plain' })
+    res.end('Not found')
+  })
+  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve))
+  const port = listener.address().port
+  try {
+    let response
+    for (let attempt = 0; attempt < 50; attempt++) {
+      response = await fetch(`http://127.0.0.1:${port}/mobile-v1-test/info`)
+      if (response.status === 200) break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.equal(response.status, 200, '经对外监听器访问 /info 必须 200（公网路径）')
+    const body = await response.json()
+    assert.equal(body.protocolVersion, 1)
+    // 宿主 webServer 仍要注册（本机管理与 diff 用它）。
+    assert.ok(hostRoutes.includes('/mobile-v1-test'))
+    assert.ok(hostUpgrades.includes('/mobile-v1-test/events'))
+    // 前缀不能跨段吞掉邻居路径。
+    assert.equal((await fetch(`http://127.0.0.1:${port}/mobile-v1-testx/info`)).status, 404)
+  } finally {
+    await new Promise(resolve => listener.close(resolve))
+    await handle.dispose()
+    await rm(home, { recursive: true, force: true })
+  }
+})

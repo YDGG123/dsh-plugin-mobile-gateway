@@ -112,5 +112,63 @@ assert.equal(restored.snapshot().publicUrl, 'wss://quick-5.trycloudflare.com/ws/
 await restored.configure({ enabled: false })
 await assert.rejects(restored.restart(), /请先开启/)
 restored.dispose()
+
+// ---- mobile-v1 必须也能经隧道回环监听器访问（否则公网 404）----
+{
+  const freePort = async () => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1')
+    await once(probe, 'listening')
+    const value = probe.address().port
+    probe.close()
+    await once(probe, 'close')
+    return value
+  }
+  const rawUpgrade = (port, target) => new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1')
+    let buffer = ''
+    socket.on('connect', () => socket.write(
+      'GET ' + target + ' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n' +
+      'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n'))
+    socket.on('data', chunk => { buffer += chunk.toString('utf8') })
+    socket.on('end', () => resolve(buffer))
+    socket.on('close', () => resolve(buffer))
+    socket.on('error', reject)
+  })
+  const v1File = path.join(temp, 'cloudflare-mobile-v1.json')
+  const v1Port = await freePort()
+  const v1 = createCloudflareTunnel({
+    file: v1File, port: v1Port, wsPath: '/ws/mobile', supported: true, spawnProcess,
+    prepareExecutable: async () => '/fake/cloudflared',
+    probeEndpoint: async () => ({ state: 'reachable', message: 'mock route verified' }),
+    isGatewayEnabled: () => true,
+    onUpgrade: (_req, socket) => socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'),
+    onHttp: (req, res) => {
+      if (!req.url.startsWith('/mobile/v1')) return false
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{"protocolVersion":1}')
+      return true
+    },
+    onExtraUpgrade: (req, socket) => {
+      if (req.url !== '/mobile/v1/events') return false
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+      return true
+    },
+  })
+  await v1.configure({ enabled: true, mode: 'named', hostname: 'gateway.example.com', token })
+  await new Promise((resolve) => setImmediate(resolve))
+  const info = await fetch('http://127.0.0.1:' + v1Port + '/mobile/v1/info')
+  assert.equal(info.status, 200)
+  assert.equal((await info.json()).protocolVersion, 1)
+  // 其它路径仍然是 404，不得借机把 WebUI/管理面暴露出去
+  assert.equal((await fetch('http://127.0.0.1:' + v1Port + '/mgw/status')).status, 404)
+  assert.equal((await fetch('http://127.0.0.1:' + v1Port + '/')).status, 404)
+  // WS：旧协议路径仍走网关，mobile-v1 的 /events 也要能到我们自己的处理器
+  assert.match(await rawUpgrade(v1Port, '/mobile/v1/events'), /401 Unauthorized/)
+  assert.match(await rawUpgrade(v1Port, '/ws/mobile'), /401 Unauthorized/)
+  assert.match(await rawUpgrade(v1Port, '/zzz'), /404 Not Found/)
+  await v1.dispose()
+}
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log('CLOUDFLARE TUNNEL TESTS PASSED')

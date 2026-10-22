@@ -7,6 +7,19 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 移植自 `MuQY1818/ds-bot-mobile-app` 的 `bridge/`（v0.0.6），协议形状与
 `dsh-mobile` 设计文档 v1.2 §2 逐字节兼容：移动端 App 的 bridge 客户端无需改动。
 
+### 挂载位置（手机到底走哪个口）
+
+同一组路由**同时**注册到三处监听器，缺一即公网 404：
+
+| 监听器 | 典型端口 | 谁用 |
+| --- | --- | --- |
+| 宿主 webServer | 127.0.0.1:<webPort> | 本机调试、diff 脚本、面板（loopback-only） |
+| LAN 监听器（`lanPort`） | 3081 | 手机同一局域网直连 |
+| 隧道回环监听器（`cloudflarePort`） | 3082 | cloudflared 后端 → 公网 Quick/Named Tunnel |
+
+路由表在 apply 早期同步注册、监听器在请求期查表（`lib/extra-routes.mjs`，前缀 longest-prefix-wins）。
+`/mgw/*` 管理面**只**在宿主 loopback 上，LAN/隧道一律 404，公网够不到。
+
 ## 端点（前缀 `/mobile/v1`）
 
 | 方法 | 路径 | 说明 |
