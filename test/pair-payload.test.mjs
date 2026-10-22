@@ -99,3 +99,12 @@ test('explicit publicUrl is honored and never warns', async () => {
   assert.equal(decoded.publicUrl, 'wss://ydgg.dpdns.org/ws/mobile')
   dispose()
 })
+
+test('pairing record honors the requested device name', async () => {
+  const { routes, dispose } = boot()
+  try {
+    const { status, body } = await pair(routes, { name: '厨房 iPad', publicUrl: 'wss://ydgg.dpdns.org/ws/mobile' })
+    assert.equal(status, 201)
+    assert.equal(body.pairing.name, '厨房 iPad')
+  } finally { dispose() }
+})
