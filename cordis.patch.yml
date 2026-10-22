@@ -34,10 +34,9 @@
         # Written automatically by `sudo npx dsh-plugin-mobile-gateway setup`.
         publicUrlFile: /etc/dsh-mobile-gateway/public-url
         # /mobile/v1：原 ds-bot-mobile-bridge 协议（团队投影/配对/动作/WS）。
-        # bundle 默认关闭：配置权只在部署侧，避免「装上即接管/与 bridge 撞车」。
-        # 部署时在 live profile 的 patch 里显式开启；共存验证可先配测试前缀：
-        #   mobileV1Enabled: true
-        #   mobileV1Prefix: /mobile-v1-test
+        # 开关权只在部署侧：bundle 默认关闭，避免「装上即接管 / 与 bridge 撞车」。
+        # 部署侧在 live profile 的 patch 里显式开启；共存验证可先配测试前缀。
+        # 详见 docs/mobile-v1-integration.md。
         mobileV1Enabled: false
         # 设备与回执存储目录；留空用 ~/.dsh/mobile-v1。
         # mobileV1Home: /path/to/mobile-v1
