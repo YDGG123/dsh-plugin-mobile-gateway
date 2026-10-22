@@ -361,3 +361,83 @@ test('sessionController is resolved per call, so a late-provisioned service is p
     await rm(home, { recursive: true, force: true })
   }
 })
+
+test('approval issues the gateway credential once and ships it with the session', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  const issued = []
+  const server = await createMobileV1({
+    home,
+    config: { devAllowInsecure: true },
+    adapter,
+    publicUrl: 'https://pair.example.test',
+    issueGatewayDevice: async ({ deviceName }) => {
+      issued.push(deviceName)
+      return { deviceId: 'gw-1', token: 'gateway-token', wsPath: '/ws/mobile' }
+    },
+  })
+  try {
+    const pairing = await server.operator('pairing.create')
+    // 走真实状态机：claim → approve → complete
+    const http = (await import('node:http')).createServer(server.handleHttp)
+    await new Promise(resolve => http.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${http.address().port}/mobile/v1`
+    try {
+      const started = await (await fetch(`${base}/pairings`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: pairing.code, deviceName: 'iPhone 15' }),
+      })).json()
+      // 批准前不得签发（只有批准那一刻才发）
+      assert.deepEqual(issued, [])
+      await server.operator('pairing.approve', { requestId: started.requestId })
+      assert.deepEqual(issued, ['iPhone 15'], '批准时应签发一次网关凭证')
+      const session = await (await fetch(`${base}/pairings/complete`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ claimToken: started.claimToken }),
+      })).json()
+      assert.equal(typeof session.accessToken, 'string')
+      assert.deepEqual(session.gateway, { deviceId: 'gw-1', token: 'gateway-token', wsPath: '/ws/mobile' })
+      // 再次 complete 走缓存路径，gateway 依然在，且不会重复签发
+      const again = await (await fetch(`${base}/pairings/complete`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ claimToken: started.claimToken }),
+      })).json()
+      assert.deepEqual(again.gateway, session.gateway)
+      assert.deepEqual(issued, ['iPhone 15'])
+    } finally {
+      await new Promise(resolve => http.close(resolve))
+    }
+  } finally {
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('no issuance hook keeps the gateway field absent (old clients unaffected)', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'mobile-v1-test-'))
+  const adapter = createAdapter({ connection: fixtureConnection() })
+  await adapter.initialize()
+  const server = await createMobileV1({ home, config: { devAllowInsecure: true }, adapter, publicUrl: 'https://pair.example.test' })
+  const http = (await import('node:http')).createServer(server.handleHttp)
+  await new Promise(resolve => http.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${http.address().port}/mobile/v1`
+  try {
+    const pairing = await server.operator('pairing.create')
+    const started = await (await fetch(`${base}/pairings`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: pairing.code, deviceName: 'Old App' }),
+    })).json()
+    await server.operator('pairing.approve', { requestId: started.requestId })
+    const session = await (await fetch(`${base}/pairings/complete`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ claimToken: started.claimToken }),
+    })).json()
+    assert.equal(session.gateway, undefined)
+    assert.equal(typeof session.accessToken, 'string')
+  } finally {
+    await new Promise(resolve => http.close(resolve))
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})

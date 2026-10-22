@@ -37,13 +37,33 @@ ds-bot-mobile-bridge 的 `/mobile/v1` 协议（团队投影 / 配对 / 动作 / 
 会话列表取不到时降级为空、绝不影响团队视图。能力面：`/info.capabilities.sessions === true` 才代表可用。
 数据源是插件内已有的 `api.sessions.list()`（与旧网关会话列表同源），**手机端不因此多一套凭证**。
 
+### 一次配对发两套凭证（U5）
+
+面板批准那一刻，插件用网关同一个 devices registry 顺带签发一条**网关设备凭证**，
+随 session 一起下发（可选字段，老客户端忽略即可）：
+
+```json
+{
+  "accessToken": "…", "refreshToken": "…", "deviceId": "…", "serverId": "…", "expiresAt": 0,
+  "gateway": { "deviceId": "…", "token": "…", "wsPath": "/ws/mobile" }
+}
+```
+
+用途：App 用这一条凭证就能同时连 **bridge 协议（团队/Bot）** 与 **旧网关协议（原版会话列表 + 富聊天窗口）**，
+不再需要第二次配对。约定：
+
+- 只在**批准**时签发一次；重复 complete 走缓存，不会重复签发
+- 签发失败时字段缺省（`null`/缺失），**不影响 bridge 配对本身**
+- 安全面：批准 = 授予该设备访问桌面全部会话（面板已写明）。要收紧时再加「只授团队／授全部会话」的开关
+- 与网关 WS 的鉴权共用：`Authorization: Bearer <token>`（或既有 query 参数策略）
+
 ## 端点（前缀 `/mobile/v1`）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/mobile/v1/info` | 免认证：protocolVersion/serverId/name/capabilities/compatibility |
 | POST | `/mobile/v1/pairings` | `{code, deviceName}` → `{claimToken, requestId, status}` |
-| POST | `/mobile/v1/pairings/complete` | `{claimToken}` → pending 或 Session |
+| POST | `/mobile/v1/pairings/complete` | `{claimToken}` → pending 或 Session（含可选的 `gateway:{deviceId,token,wsPath}`，见下） |
 | POST | `/mobile/v1/auth/refresh` | `{refreshToken}` → 新 Session |
 | GET | `/mobile/v1/state` | TeamState（bots/rooms/models/mainBotIds/work…） |
 | GET | `/mobile/v1/conversations` | 会话列表（bots+群聊） |
